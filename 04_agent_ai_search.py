@@ -7,8 +7,13 @@ from azure.ai.projects.models import (
     AzureAISearchTool,
     AzureAISearchToolResource,
     AISearchIndexResource,
-    AzureAISearchQueryType
+    AzureAISearchQueryType,
+    ConnectionType
 )
+
+from azure.core.credentials import AzureKeyCredential
+from azure.search.documents import SearchClient
+from azure.search.documents.models import VectorizableTextQuery
 
 # Load environment variables from .env if present
 load_dotenv()
@@ -16,38 +21,32 @@ load_dotenv()
 # Base configuration
 endpoint = os.environ.get("PROJECT_ENDPOINT", "https://vovyaz-test-foundry-1.services.ai.azure.com/api/projects/proj-default")
 
+ai_search_endpoint = "https://vovyaiseach.search.windows.net"
+ai_search_index_name = "my-rag-ai-search-index-1"
+ai_search_connection_id = "/subscriptions/40a7965b-275f-4e70-9e76-1ff9b2b40490/resourceGroups/foundry-test1/providers/Microsoft.CognitiveServices/accounts/vovyaz-test-foundry-1/projects/proj-default/connections/vovyaiseachj9kdyn"
+
 print("Initializing AIProjectClient...")
 project_client = AIProjectClient(
     endpoint=endpoint,
     credential=DefaultAzureCredential(),
 )
 
-# 1. Configure the Azure AI Search connection ID and index name.
-# You can set these in your environment or substitute your actual values below.
-ai_search_connection_id = os.environ.get("AI_SEARCH_CONNECTION_ID")
-ai_search_index_name = os.environ.get("AI_SEARCH_INDEX_NAME")
+openai_client = project_client.get_openai_client()
 
-# Dynamic fallback: try to locate a CognitiveSearch connection name in the project automatically
-if not ai_search_connection_id:
-    print("Searching for an Azure AI Search connection in the project...")
-    try:
-        for conn in project_client.connections.list():
-            if conn.type == "CognitiveSearch" or "search" in conn.name.lower():
-                ai_search_connection_id = conn.id
-                print(f"Found search connection: {conn.name} ({conn.id})")
-                break
-    except Exception as e:
-        print(f"Could not list connections: {e}")
+# Dynamically retrieve connection key to resolve the Forbidden error for SearchClient
+print("Retrieving AI Search connection credentials...")
+search_connection = project_client.connections.get_default(
+    connection_type=ConnectionType.AZURE_AI_SEARCH,
+    include_credentials=True
+)
+api_key = search_connection.credentials.api_key
 
-# Placeholders if no environment variables or active connections are found
-if not ai_search_connection_id:
-    ai_search_connection_id = "/subscriptions/your-sub/resourceGroups/your-rg/providers/Microsoft.CognitiveServices/accounts/your-account/projects/your-project/connections/your-search-connection"
-    print(f"No active Search connection found. Using placeholder connection ID: {ai_search_connection_id}")
-
-if not ai_search_index_name:
-    ai_search_index_name = "your-search-index"
-    print(f"No search index name provided. Using placeholder index name: {ai_search_index_name}")
-
+print("Initializing SearchClient with retrieved API Key...")
+search_client = SearchClient(
+    endpoint=ai_search_endpoint,
+    credential=AzureKeyCredential(api_key),
+    index_name=ai_search_index_name,
+)
 
 # 2. Define the Azure AI Search tool using AzureAISearchToolResource and AISearchIndexResource
 print("\nSetting up Azure AI Search tool...")
@@ -72,7 +71,7 @@ agent = project_client.agents.create_version(
         model="gpt-4o-mini",
         instructions=(
             "You are a helpful customer support agent. "
-            "Use the provided Azure AI Search tool to find relevant information "
+            "Use the provided sources to find relevant information "
             "and answer the user's questions. Always ground your responses in the retrieved documents."
         ),
         tools=[search_tool]
@@ -80,44 +79,74 @@ agent = project_client.agents.create_version(
 )
 print(f"Created Agent: {agent.name} (version {agent.version})")
 
+
+def ask(question):
+    # Step 1: Retrieve grounding data from Azure AI Search
+    results = search_client.search(
+        search_text=question,
+        vector_queries=[
+            VectorizableTextQuery(
+                text=question,
+                k_nearest_neighbors=3,
+                fields="text_vector",
+            )
+        ],
+        select=["chunk", "title", "parent_id"],
+        top=3,
+    )
+
+    # Step 2: Convert search results into source text
+    source_list = []
+
+    for result in results:
+        title = result.get("title", "Unknown source")
+        parent_id = result.get("parent_id", "")
+        chunk = result.get("chunk", "")
+
+        source_text = f"""
+[Source title: {title}]
+[Parent ID: {parent_id}]
+{chunk}
+"""
+        source_list.append(source_text)        
+
+    sources = "\n\n".join(source_list)
+
+    # Step 3: Build the grounded prompt for the agent
+    prompt = f"""
+You are a helpful customer support agent.
+
+Answer the customer question using only the sources provided below.
+If the sources do not contain enough information, say that the knowledge base does not contain enough information.
+
+Sources:
+{sources}
+
+Customer question:
+{question}
+"""
+
+    print("\nPrompt sent to agent:\n")
+    print(prompt)
+
+    # Step 4: Ask the Foundry agent to answer using the sources
+    response = openai_client.responses.create(
+        extra_body={
+            "agent_reference": {
+                "name": agent_name,
+                "type": "agent_reference"
+            }
+        },
+        input=prompt,
+    )
+
+    return response.output_text
+
+
 try:
-    # 3. Create a thread
-    print("\nCreating agent conversation thread...")
-    thread = project_client.agents.create_thread()
-    print(f"Created thread: {thread.id}")
-
-    # Define a grounding query and add it as a message to the thread
-    prompt = "Tell me about the latest features or pricing plans from our search database."
-    print(f"\n--- Adding message to thread: '{prompt}' ---")
-    project_client.agents.create_message(
-        thread_id=thread.id,
-        role="user",
-        content=prompt
-    )
-
-    # 4. Run the agent on the thread and wait for completion (model-agnostic execution)
-    print("Running the agent...")
-    run = project_client.agents.create_and_process_run(
-        thread_id=thread.id,
-        assistant_id=agent.id
-    )
-    print(f"Run status: {run.status}")
-
-    if run.status == "completed":
-        # Get messages from the thread
-        messages = project_client.agents.list_messages(thread_id=thread.id)
-        
-        # Extract the latest response
-        response_text = ""
-        if messages.data:
-            latest_msg = messages.data[0]
-            for content_part in latest_msg.content:
-                if content_part.type == "text":
-                    response_text = content_part.text.value
-                    break
-        print(f"\nAgent Response:\n{response_text}")
-    else:
-        print(f"\nAgent execution failed with status: {run.status}")
+    question = "Tell me about rich, creamy pistachio gelato from our search database."
+    response_text = ask(question)
+    print(f"\nAgent Response:\n{response_text}")
 
 except Exception as e:
     print(f"\nExecution failed: {e}")
