@@ -1,62 +1,82 @@
 import os
 import sys
+import json
 from datetime import datetime, timezone
-from azure.identity import InteractiveBrowserCredential
+import msal
 
-def get_user_token(client_id: str, tenant_id: str = None, scope_name: str = ".default") -> tuple[str, datetime]:
+def get_user_tokens_via_msal(client_id: str, tenant_id: str, scope_name: str = ".default") -> dict:
     """
-    Acquires an Entra ID access token interactively by launching the system browser.
+    Acquires tokens (both Access Token and ID Token) using MSAL directly.
+    MSAL's acquire_token_interactive launches the browser and returns the full response dictionary.
     
     :param client_id: The Client ID of your App Registration.
-    :param tenant_id: Your Directory (tenant) ID. Explicitly specifying this prevents multi-tenant login loops.
-    :param scope_name: The scope/permission name defined on the API. Defaults to '.default'.
-    :return: A tuple of (access_token_string, expiration_datetime_object)
+    :param tenant_id: Your Directory (tenant) ID.
+    :param scope_name: The scope name (e.g., '.default').
+    :return: A dictionary containing 'access_token', 'id_token', 'id_claims', and 'expires_at'.
     """
-    # 1. Fully qualify the scope.
-    if scope_name == ".default":
-        scope = f"api://{client_id}/.default"
-    elif scope_name.startswith("api://"):
-        scope = scope_name
-    else:
-        scope = f"api://{client_id}/{scope_name}"
-        
-    print(f"Initializing authentication for client: {client_id}")
-    print(f"Tenant ID: {tenant_id or 'Common (Multi-tenant)'}")
-    print(f"Requesting scope: {scope}")
-    
-    # 2. Initialize the credential with Client ID and Tenant ID.
-    # Specifying tenant_id forces MSAL to route directly to your directory rather than prompt-looping.
-    credential = InteractiveBrowserCredential(
+    # 1. Initialize MSAL PublicClientApplication
+    authority = f"https://login.microsoftonline.com/{tenant_id}"
+    app = msal.PublicClientApplication(
         client_id=client_id,
-        tenant_id=tenant_id
+        authority=authority
     )
     
-    # 3. Request the token
-    token_info = credential.get_token(scope)
+    # 2. Fully qualify the scope and add OIDC scopes (openid, profile) to ensure we get an ID token
+    if scope_name == ".default":
+        api_scope = f"api://{client_id}/.default"
+    elif scope_name.startswith("api://"):
+        api_scope = scope_name
+    else:
+        api_scope = f"api://{client_id}/{scope_name}"
+        
+    scopes = [api_scope]
     
+    print(f"Initializing authentication for client: {client_id}")
+    print(f"Authority: {authority}")
+    print(f"Requesting scopes: {scopes}")
+    
+    # 3. Interactive login
+    result = app.acquire_token_interactive(scopes=scopes)
+    
+    if "error" in result:
+        raise Exception(f"MSAL Error: {result.get('error_description', result.get('error'))}")
+        
     # Convert expiration timestamp
-    expires_dt = datetime.fromtimestamp(token_info.expires_on, tz=timezone.utc)
+    expires_on = result.get("expires_in", 3600) + int(datetime.now().timestamp())
+    expires_dt = datetime.fromtimestamp(expires_on, tz=timezone.utc)
     
-    return token_info.token, expires_dt
+    return {
+        "access_token": result.get("access_token"),
+        "id_token": result.get("id_token"),
+        "id_claims": result.get("id_token_claims", {}),
+        "expires_at": expires_dt
+    }
 
 if __name__ == "__main__":
-    print("=== Entra ID Interactive Authentication POC ===\n")
+    print("=== Entra ID Interactive Authentication POC (MSAL Direct) ===\n")
     
-    # Configure variables (retrieved from environment or defaults)
+    # Configure variables
     client_id = os.environ.get("AZURE_CLIENT_ID", "d66fe946-550a-4048-9582-432a5ae95561")
     tenant_id = os.environ.get("AZURE_TENANT_ID", "060e0979-b29c-46cc-9075-0c0478bffd3e")
             
     try:
-        # Request the default scope
-        token, expires_at = get_user_token(client_id, tenant_id, "access_as_user")
+        # Request tokens using MSAL
+        auth_data = get_user_tokens_via_msal(client_id, tenant_id, "access_as_user")
         
         print("\n" + "="*50)
         print(" AUTHENTICATION SUCCESSFUL")
         print("="*50)
-        print(f"\nAccess Token:\n{token}")
-        print("\n" + "="*50)
-        print(f"Expires On (UTC): {expires_at.strftime('%Y-%m-%d %H:%M:%S %Z')}")
-        print(f"Expires On (Local): {expires_at.astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')}")
+        
+        print(f"\nAccess Token:\n{auth_data['access_token']}")
+        
+        print("\n" + "-"*50)
+        print(f"ID Token (For user identification):\n{auth_data['id_token']}")
+        print(f"\nID Token Decoded Claims:")
+        print(json.dumps(auth_data['id_claims'], indent=2))
+        print("-"*50)
+        
+        print(f"\nExpires On (UTC): {auth_data['expires_at'].strftime('%Y-%m-%d %H:%M:%S %Z')}")
+        print(f"Expires On (Local): {auth_data['expires_at'].astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')}")
         print("="*50)
         
     except Exception as e:
