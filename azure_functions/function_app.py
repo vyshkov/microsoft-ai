@@ -17,40 +17,61 @@ except Exception as e:
 
 def is_authorized(req: func.HttpRequest) -> tuple[bool, int, str]:
     """
-    Decodes the Bearer token (Access Token or ID Token) and checks for the 'User' role.
-    Note: For a simple local/development POC, this performs unverified JWT parsing.
-    In a production app, token signatures and issuers should be validated.
+    Checks authorization by verifying if the user has the 'User' role.
+    Supports both Azure Easy Auth (via X-MS-CLIENT-PRINCIPAL header) and
+    local client testing (via Bearer Authorization token fallback).
     
     :return: A tuple of (is_authorized_bool, http_status_code, error_message)
     """
+    principal_header = req.headers.get("X-MS-CLIENT-PRINCIPAL")
+    
+    # 1. Easy Auth Path (Production)
+    if principal_header:
+        try:
+            # Easy Auth forwards a base64 encoded JSON string in the X-MS-CLIENT-PRINCIPAL header
+            decoded_bytes = base64.b64decode(principal_header)
+            principal_data = json.loads(decoded_bytes.decode("utf-8"))
+            claims = principal_data.get("claims", [])
+            
+            # Extract roles from the claims
+            roles = [
+                c.get("val") for c in claims 
+                if c.get("typ") in ["roles", "http://schemas.microsoft.com/ws/2008/06/identity/claims/role"]
+            ]
+            
+            if "User" not in roles:
+                return False, 403, "Access denied. Required role 'User' is missing."
+                
+            return True, 200, ""
+        except Exception as e:
+            return False, 401, f"Failed to parse Easy Auth principal: {str(e)}"
+            
+    # 2. Local Fallback / Bearer Token Path (Development/Local testing)
     auth_header = req.headers.get("Authorization")
     if not auth_header or not auth_header.startswith("Bearer "):
-        return False, 401, "Missing or invalid Authorization header. Expected Bearer token."
-    
+        return False, 401, "Missing or invalid authorization. Easy Auth principal header or Bearer token expected."
+        
     token = auth_header.split(" ")[1]
     try:
         parts = token.split('.')
         if len(parts) != 3:
             return False, 401, "Malformed token structure."
         
-        # Base64 decode the JWT payload segment (middle part)
         payload_b64 = parts[1]
         payload_b64 += '=' * (4 - len(payload_b64) % 4)  # Add padding if required
         payload_json = base64.urlsafe_b64decode(payload_b64).decode('utf-8')
         payload = json.loads(payload_json)
         
-        # Extract roles (usually a list of strings)
         roles = payload.get("roles", [])
         if isinstance(roles, str):
             roles = [roles]
             
-        # Check if the required 'User' role is present
         if "User" not in roles:
             return False, 403, "Access denied. Required role 'User' is missing."
             
         return True, 200, ""
     except Exception as e:
-        return False, 401, f"Failed to parse token: {str(e)}"
+        return False, 401, f"Failed to parse Bearer token: {str(e)}"
 
 @app.route(route="tasks", methods=["GET"])
 def get_tasks(req: func.HttpRequest) -> func.HttpResponse:
