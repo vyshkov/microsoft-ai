@@ -1,0 +1,144 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Task Manager API",
+    "version": "1.0.0",
+    "description": "An API to list, create, and delete items from a task list tracker."
+  },
+  "servers": [
+    {
+      "url": "http://localhost:7071/api",
+      "description": "Local Azure Function endpoint"
+    }
+  ],
+  "paths": {
+    "/tasks": {
+      "get": {
+        "summary": "Retrieve all tasks",
+        "description": "Returns a list of all current tasks.",
+        "operationId": "getTasks",
+        "responses": {
+          "200": {
+            "description": "A JSON array of tasks",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Task"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Create a new task",
+        "description": "Adds a task to the tracker list.",
+        "operationId": "createTask",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string",
+                    "description": "The title of the task."
+                  },
+                  "description": {
+                    "type": "string",
+                    "description": "Additional details about the task."
+                  }
+                },
+                "required": [
+                  "title"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Task created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Task"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input data"
+          }
+        }
+      }
+    },
+    "/tasks/{id}": {
+      "delete": {
+        "summary": "Delete a task by ID",
+        "description": "Removes a task from the tracker using its identifier.",
+        "operationId": "deleteTask",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "The identifier of the task to delete.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Task successfully deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Task not found"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Task": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The unique identifier of the task."
+          },
+          "title": {
+            "type": "string",
+            "description": "The name or title of the task."
+          },
+          "description": {
+            "type": "string",
+            "description": "Detailed notes on the task."
+          },
+          "completed": {
+            "type": "boolean",
+            "description": "The completion status of the task."
+          }
+        }
+      }
+    }
+  }
+}
