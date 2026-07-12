@@ -276,3 +276,5 @@ def delete_task(req: func.HttpRequest) -> func.HttpResponse:
             mimetype="application/json",
             status_code=500
         )
+
+# to deploy func azure functionapp publish vovy-rest-api

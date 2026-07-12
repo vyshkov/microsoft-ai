@@ -12,7 +12,7 @@ from auth_helper import get_user_tokens_via_msal
 # Configuration
 CLIENT_ID = os.environ.get("AZURE_CLIENT_ID", "d66fe946-550a-4048-9582-432a5ae95561")
 TENANT_ID = os.environ.get("AZURE_TENANT_ID", "060e0979-b29c-46cc-9075-0c0478bffd3e")
-FUNCTION_URL = os.environ.get("FUNCTION_URL", "http://localhost:7071/api/tasks")
+FUNCTION_URL = os.environ.get("FUNCTION_URL", "https://vovy-rest-api-bxchc2abe3htegc6.eastus-01.azurewebsites.net/api/tasks")
 
 def main():
     print("=== Querying Azure Function Tasks API with authentication ===")
