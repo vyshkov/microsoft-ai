@@ -1,6 +1,7 @@
 import azure.functions as func
 import logging
 import json
+import base64
 from tasks_repository import TasksRepository
 
 # Initialize the Function App
@@ -12,13 +13,59 @@ try:
     logging.info("Successfully connected TasksRepository to Cosmos DB.")
 except Exception as e:
     logging.error(f"Failed to initialize TasksRepository: {e}")
-    # In case initialization fails, we initialize it as None and try to reconnect on demand or raise errors.
     repo = None
+
+def is_authorized(req: func.HttpRequest) -> tuple[bool, int, str]:
+    """
+    Decodes the Bearer token (Access Token or ID Token) and checks for the 'User' role.
+    Note: For a simple local/development POC, this performs unverified JWT parsing.
+    In a production app, token signatures and issuers should be validated.
+    
+    :return: A tuple of (is_authorized_bool, http_status_code, error_message)
+    """
+    auth_header = req.headers.get("Authorization")
+    if not auth_header or not auth_header.startswith("Bearer "):
+        return False, 401, "Missing or invalid Authorization header. Expected Bearer token."
+    
+    token = auth_header.split(" ")[1]
+    try:
+        parts = token.split('.')
+        if len(parts) != 3:
+            return False, 401, "Malformed token structure."
+        
+        # Base64 decode the JWT payload segment (middle part)
+        payload_b64 = parts[1]
+        payload_b64 += '=' * (4 - len(payload_b64) % 4)  # Add padding if required
+        payload_json = base64.urlsafe_b64decode(payload_b64).decode('utf-8')
+        payload = json.loads(payload_json)
+        
+        # Extract roles (usually a list of strings)
+        roles = payload.get("roles", [])
+        if isinstance(roles, str):
+            roles = [roles]
+            
+        # Check if the required 'User' role is present
+        if "User" not in roles:
+            return False, 403, "Access denied. Required role 'User' is missing."
+            
+        return True, 200, ""
+    except Exception as e:
+        return False, 401, f"Failed to parse token: {str(e)}"
 
 @app.route(route="tasks", methods=["GET"])
 def get_tasks(req: func.HttpRequest) -> func.HttpResponse:
     """Retrieve all current tasks from Cosmos DB."""
-    logging.info("HTTP trigger - GET /api/tasks 2")
+    logging.info("HTTP trigger - GET /api/tasks")
+    
+    # Authenticate and Authorize
+    authorized, status_code, err_msg = is_authorized(req)
+    if not authorized:
+        return func.HttpResponse(
+            body=json.dumps({"error": err_msg}),
+            mimetype="application/json",
+            status_code=status_code
+        )
+        
     if not repo:
         return func.HttpResponse(
             body=json.dumps({"error": "Cosmos DB connection is not initialized."}),
@@ -37,6 +84,16 @@ def get_tasks(req: func.HttpRequest) -> func.HttpResponse:
 def create_task(req: func.HttpRequest) -> func.HttpResponse:
     """Create a new task in Cosmos DB."""
     logging.info("HTTP trigger - POST /api/tasks")
+    
+    # Authenticate and Authorize
+    authorized, status_code, err_msg = is_authorized(req)
+    if not authorized:
+        return func.HttpResponse(
+            body=json.dumps({"error": err_msg}),
+            mimetype="application/json",
+            status_code=status_code
+        )
+        
     if not repo:
         return func.HttpResponse(
             body=json.dumps({"error": "Cosmos DB connection is not initialized."}),
@@ -83,6 +140,16 @@ def update_task(req: func.HttpRequest) -> func.HttpResponse:
     """Update an existing task in Cosmos DB."""
     task_id = req.route_params.get("id")
     logging.info(f"HTTP trigger - PUT /api/tasks/{task_id}")
+    
+    # Authenticate and Authorize
+    authorized, status_code, err_msg = is_authorized(req)
+    if not authorized:
+        return func.HttpResponse(
+            body=json.dumps({"error": err_msg}),
+            mimetype="application/json",
+            status_code=status_code
+        )
+        
     if not repo:
         return func.HttpResponse(
             body=json.dumps({"error": "Cosmos DB connection is not initialized."}),
@@ -110,7 +177,6 @@ def update_task(req: func.HttpRequest) -> func.HttpResponse:
     description = req_body.get("description", "")
     completed = req_body.get("completed", False)
     
-    # Ensure completed is a boolean
     if not isinstance(completed, bool):
         return func.HttpResponse(
             body=json.dumps({"error": "Field 'completed' must be a boolean"}),
@@ -151,6 +217,16 @@ def delete_task(req: func.HttpRequest) -> func.HttpResponse:
     """Delete a task by ID from Cosmos DB."""
     task_id = req.route_params.get("id")
     logging.info(f"HTTP trigger - DELETE /api/tasks/{task_id}")
+    
+    # Authenticate and Authorize
+    authorized, status_code, err_msg = is_authorized(req)
+    if not authorized:
+        return func.HttpResponse(
+            body=json.dumps({"error": err_msg}),
+            mimetype="application/json",
+            status_code=status_code
+        )
+        
     if not repo:
         return func.HttpResponse(
             body=json.dumps({"error": "Cosmos DB connection is not initialized."}),
