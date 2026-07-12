@@ -39,7 +39,7 @@ except Exception as e:
     sys.exit(1)
 
 # 2. Define the local tool function that calls the API on behalf of the user
-def execute_manage_tasks(action: str, task_title: str = None, task_id: str = None) -> str:
+def execute_manage_tasks(action: str, task_title: str = None, task_id: str = None, completed: bool = None) -> str:
     """Execute the manage_tasks tool call locally, forwarding the user's token."""
     print(f"\n[Tool Execution] Calling Tasks API on behalf of user (Action: {action})...")
     headers = {
@@ -54,6 +54,15 @@ def execute_manage_tasks(action: str, task_title: str = None, task_id: str = Non
             if not task_title:
                 return json.dumps({"error": "task_title is required for create action."})
             res = requests.post(FUNCTION_URL, headers=headers, json={"title": task_title})
+        elif action == "update":
+            if not task_id:
+                return json.dumps({"error": "task_id is required for update action."})
+            body = {}
+            if task_title is not None:
+                body["title"] = task_title
+            if completed is not None:
+                body["completed"] = completed
+            res = requests.put(f"{FUNCTION_URL}/{task_id}", headers=headers, json=body)
         elif action == "delete":
             if not task_id:
                 return json.dumps({"error": "task_id is required for delete action."})
@@ -73,25 +82,29 @@ def execute_manage_tasks(action: str, task_title: str = None, task_id: str = Non
 # 3. Define the FunctionTool with a JSON schema
 tasks_tool = FunctionTool(
     name="manage_tasks",
-    description="Query, create, or delete tasks in the task manager database on behalf of the user.",
+    description="Query, create, update, or delete tasks in the task manager database on behalf of the user.",
     parameters={
         "type": "object",
         "properties": {
             "action": {
                 "type": "string",
-                "enum": ["list", "create", "delete"],
-                "description": "The action to perform: 'list' to get all tasks, 'create' to add a new task, 'delete' to remove a task."
+                "enum": ["list", "create", "update", "delete"],
+                "description": "The action to perform: 'list' to get all tasks, 'create' to add a new task, 'update' to modify a task, 'delete' to remove a task."
             },
             "task_title": {
                 "type": ["string", "null"],
-                "description": "The title of the task. Required when action is 'create'."
+                "description": "The title of the task. Required when action is 'create'. Optional for 'update'."
             },
             "task_id": {
                 "type": ["string", "null"],
-                "description": "The ID of the task to delete. Required when action is 'delete'."
+                "description": "The ID of the task. Required when action is 'update' or 'delete'."
+            },
+            "completed": {
+                "type": ["boolean", "null"],
+                "description": "Whether the task is completed. Used with 'update' action."
             }
         },
-        "required": ["action", "task_title", "task_id"],
+        "required": ["action", "task_title", "task_id", "completed"],
         "additionalProperties": False
     },
     strict=True
@@ -158,7 +171,8 @@ try:
             result = execute_manage_tasks(
                 action=args.get("action"),
                 task_title=args.get("task_title"),
-                task_id=args.get("task_id")
+                task_id=args.get("task_id"),
+                completed=args.get("completed")
             )
             print(f"[Tool Result] {result[:200]}...")
 
