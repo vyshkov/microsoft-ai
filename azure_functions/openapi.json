@@ -3,7 +3,7 @@
   "info": {
     "title": "Task Manager API",
     "version": "1.0.0",
-    "description": "An API to list, create, and delete items from a task list tracker."
+    "description": "An API to list, create, update, and delete items from a task list tracker in Cosmos DB."
   },
   "servers": [
     {
@@ -78,6 +78,67 @@
       }
     },
     "/tasks/{id}": {
+      "put": {
+        "summary": "Update an existing task",
+        "description": "Updates a task's title, description, and completion status.",
+        "operationId": "updateTask",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "The identifier of the task to update.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string",
+                    "description": "The updated title of the task."
+                  },
+                  "description": {
+                    "type": "string",
+                    "description": "The updated description of the task."
+                  },
+                  "completed": {
+                    "type": "boolean",
+                    "description": "The updated completion status."
+                  }
+                },
+                "required": [
+                  "title"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Task updated successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Task"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input data"
+          },
+          "404": {
+            "description": "Task not found"
+          }
+        }
+      },
       "delete": {
         "summary": "Delete a task by ID",
         "description": "Removes a task from the tracker using its identifier.",
